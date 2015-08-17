@@ -1,8 +1,11 @@
 import json
+import random
 import uuid
 import fastmc.auth
 import fastmc.proto
 import pprint
+from threading import Timer
+import time
 from pymc.util import event
 
 ping_event = event.Event()
@@ -162,29 +165,60 @@ class ClientHandler(object):
                 # send join game packet, just for fun
                 out_buf.reset()
 
+                # join game packet, or also called "change dimension" - important when you change dimensions :P
                 self.writer.write(out_buf, 0x01,
                                   eid=1,
                                   game_mode=1,
-                                  dimension=1,
+                                  dimension=0,
                                   difficulty=0,
                                   max_players=60,
                                   level_type="default",
                                   reduced_debug=False)
 
+                # player spawn location (not where the player spawns, but where the compass points to)
                 self.writer.write(out_buf, 0x05,
                                   location=fastmc.proto.Position(x=0, y=0, z=0))
 
+                # player abilities
                 self.writer.write(out_buf, 0x39,
-                                  flags=1,
-                                  flying_speed=1,
-                                  walking_speed=1)
+                                  flags=5,
+                                  flying_speed=0.1,
+                                  walking_speed=0.1)
 
+                fake_data = bytearray()
+                for i in range(16*16*16):
+                    fake_data.append(16)
+                    fake_data.append(0)
+                for i in range(16*16*8):
+                    fake_data.append(255)
+                for i in range(255):
+                    fake_data.append(1)
+
+                # send some fake terrain
+                self.writer.write(out_buf, 0x21,
+                                  chunk_x=0, chunk_z=0,
+                                  continuous=True,
+                                  primary_bitmap=0b10000,
+                                  data=fake_data)
+
+                # player position and look - this will make the player leave the "Loading terrain..." screen
                 self.writer.write(out_buf, 0x08,
-                                  x=0.0, y=75.0, z=0.0,
+                                  x=0.0, y=100.0, z=0.0,
                                   yaw=0.0, pitch=0.0,
                                   flag=0)
 
                 self.sock.send(out_buf)
+
+                # start ping timer
+
+                def timeout():
+                    buf = fastmc.proto.WriteBuffer()
+                    self.writer.write(buf, 0x00,
+                                      keepalive_id=random.randint(0, 99999))
+                    self.sock.send(buf)
+                    Timer(1, timeout).start()
+
+                Timer(1, timeout).start()
 
             elif self.reader.state == fastmc.proto.PLAY:
                 # ready to receive packets

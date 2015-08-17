@@ -28,11 +28,5 @@ def start():
         print "Handling ping!"
         data.description = welcome_message()
 
-    @event.handler(pymc.network.connection.pre_connect_event)
-    def pre_connect_handler(data):
-        if data.player_name == "xxmicloxx":
-            data.cancelled = True
-            data.cancel_reason = welcome_message()
-
     import pymc.network.server
     pymc.network.server.start("0.0.0.0", 25565)
