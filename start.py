@@ -1,4 +1,4 @@
-import redmc.server
+import pymc.server
 
 if __name__ == '__main__':
-    redmc.server.start()
+    pymc.server.start()

@@ -3,7 +3,7 @@ import uuid
 import fastmc.auth
 import fastmc.proto
 import pprint
-from redmc.util import event
+from pymc.util import event
 
 ping_event = event.Event()
 

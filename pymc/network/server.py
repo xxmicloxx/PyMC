@@ -1,7 +1,7 @@
 import gevent
 from gevent.server import StreamServer
 
-from redmc.network.connection import ClientHandler
+from pymc.network.connection import ClientHandler
 
 
 def handle(sock, addr):

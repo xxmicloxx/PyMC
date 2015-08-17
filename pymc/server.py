@@ -1,6 +1,6 @@
 def welcome_message():
     import random
-    from redmc.util import chat
+    from pymc.util import chat
     message_builder = chat.MessageBuilder()
 
     element = chat.TextElement("I can haz ")
@@ -20,19 +20,19 @@ def welcome_message():
 
 
 def start():
-    import redmc.network.connection
-    from redmc.util import event
+    import pymc.network.connection
+    from pymc.util import event
 
-    @event.handler(redmc.network.connection.ping_event)
+    @event.handler(pymc.network.connection.ping_event)
     def ping_handler(data):
         print "Handling ping!"
         data.description = welcome_message()
 
-    @event.handler(redmc.network.connection.pre_connect_event)
+    @event.handler(pymc.network.connection.pre_connect_event)
     def pre_connect_handler(data):
         if data.player_name == "xxmicloxx":
             data.cancelled = True
             data.cancel_reason = welcome_message()
 
-    import redmc.network.server
-    redmc.network.server.start("0.0.0.0", 25565)
+    import pymc.network.server
+    pymc.network.server.start("0.0.0.0", 25565)
