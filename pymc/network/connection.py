@@ -186,13 +186,15 @@ class ClientHandler(object):
                                   walking_speed=0.1)
 
                 fake_data = bytearray()
-                for i in range(5):
+                for i in range(1):
                     for i in range(16*16*16):
                         fake_data.append(32)
                         fake_data.append(0)
                     for i in range(16*16*8):
                         fake_data.append(255)
-                    for i in range(255):
+                    for i in range(16*16*8):
+                        fake_data.append(255)
+                    for i in range(256):
                         fake_data.append(1)
 
                 # send some fake terrain
