@@ -99,7 +99,7 @@ class ChunkSplit(object):
 
     def set_block_id_and_metadata(self, x, y, z, id, metadata):
         short = id << 4 | metadata
-        i = y << 8 | z << 4 | x << 1
+        i = y << 9 | z << 5 | x << 1
         self.ids[i] = short & 0xff
         self.ids[i | 1] = short >> 8
         # TODO mark dirty
