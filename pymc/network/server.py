@@ -1,15 +1,20 @@
 import gevent
 from gevent.server import StreamServer
+from gevent.pool import Pool
 
-from pymc.network.connection import ClientHandler
+from pymc.network.connection import ConnectionHandler
 
 
 def handle(sock, addr):
-    g = gevent.spawn(ClientHandler().greenlet_run, sock)
+    g = gevent.spawn(ConnectionHandler().greenlet_run, sock)
     g.join()
 
 
 def start(addr, port):
-    listener = StreamServer((addr, port), handle)
-    listener.start()
-    listener.serve_forever()
+    pool = Pool()
+
+    listener = StreamServer((addr, port), handle, spawn=pool)
+    try:
+        listener.serve_forever()
+    except KeyboardInterrupt:
+        listener.stop()

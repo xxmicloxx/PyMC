@@ -4,7 +4,7 @@ import uuid
 import fastmc.auth
 import fastmc.proto
 import pprint
-from threading import Timer
+from threading import Timer, Lock
 import time
 from pymc.util import event
 
@@ -37,7 +37,7 @@ class PingEventData(object):
         self.description = {"text": "A Minecraft Server"}
 
 
-class ClientHandler(object):
+class ConnectionHandler(object):
     def __init__(self):
         self.sock = None
         self.reader = self.writer = None
@@ -46,6 +46,8 @@ class ClientHandler(object):
         self.key = fastmc.auth.generate_key_pair()
         self.player_ign = None
         self.uuid = None
+        self.alive = True
+        self.sock_mutex = Lock()
 
     def handle_pkt(self, pkt):
         print pkt
@@ -72,11 +74,11 @@ class ClientHandler(object):
                     },
                     "description": data.description
                 })
-                self.sock.send(out_buf)
+                self.sock_send(out_buf)
             elif pkt.id == 0x01:
                 out_buf = fastmc.proto.WriteBuffer()
                 self.writer.write(out_buf, 0x01, time=pkt.time)
-                self.sock.send(out_buf)
+                self.sock_send(out_buf)
         elif self.reader.state == fastmc.proto.LOGIN:
             if pkt.id == 0x00:
                 out_buf = fastmc.proto.WriteBuffer()
@@ -98,7 +100,7 @@ class ClientHandler(object):
                                       public_key=fastmc.auth.encode_public_key(self.key),
                                       challenge_token=self.token)
 
-                self.sock.send(out_buf)
+                self.sock_send(out_buf)
             elif pkt.id == 0x01:
                 decrypted_token = fastmc.auth.decrypt_with_private_key(pkt.response_token, self.key)
 
@@ -140,7 +142,7 @@ class ClientHandler(object):
                                                                                                  "reason in the "
                                                                                                  "cancel_reason "
                                                                                                  "field."})
-                    self.sock.send(out_buf)
+                    self.sock_send(out_buf)
                     return
 
                 # set compression
@@ -159,7 +161,7 @@ class ClientHandler(object):
                 self.reader.switch_state(fastmc.proto.PLAY)
                 self.writer.switch_state(fastmc.proto.PLAY)
 
-                self.sock.send(out_buf)
+                self.sock_send(out_buf)
                 print "%s logged in" % self.player_ign
 
                 # send join game packet, just for fun
@@ -186,7 +188,7 @@ class ClientHandler(object):
                                   walking_speed=0.1)
 
                 fake_data = bytearray()
-                for i in range(1):
+                for i in range(11*11):
                     for i in range(16*16*16):
                         fake_data.append(32)
                         fake_data.append(0)
@@ -197,12 +199,31 @@ class ClientHandler(object):
                     for i in range(256):
                         fake_data.append(1)
 
+                chunk_info_list = []
+                data_offset = 0
+                for x in range(-5, 6):
+                    for z in range(-5, 6):
+                        chunk_info = fastmc.proto.Chunk14w28a(x, z, 0b10000, data_offset)
+                        data_offset += 16*16*16*2 # blocks (1 short per block)
+                        data_offset += 16*16*8 # light (1 byte per 2 blocks)
+                        data_offset += 16*16*8 # skylight (1 byte per 2 blocks)
+                        data_offset += 16*16 # biomes (1 byte per block)
+                        chunk_info_list.append(chunk_info)
+
+                bulk = fastmc.proto.ChunkBulk14w28a(
+                    sky_light_sent=True,
+                    data=fake_data,
+                    chunks=chunk_info_list
+                )
+
+                self.writer.write(out_buf, 0x26, bulk=bulk)
+
                 # send some fake terrain
-                self.writer.write(out_buf, 0x21,
-                                  chunk_x=0, chunk_z=0,
-                                  continuous=True,
-                                  primary_bitmap=0b10000,
-                                  data=fake_data)
+                # self.writer.write(out_buf, 0x21,
+                #                   chunk_x=0, chunk_z=0,
+                #                   continuous=True,
+                #                   primary_bitmap=0b10000,
+                #                   data=fake_data)
 
                 # player position and look - this will make the player leave the "Loading terrain..." screen
                 self.writer.write(out_buf, 0x08,
@@ -210,15 +231,18 @@ class ClientHandler(object):
                                   yaw=0.0, pitch=0.0,
                                   flag=0)
 
-                self.sock.send(out_buf)
+                self.sock_send(out_buf)
 
                 # start ping timer
 
                 def timeout():
+                    if not self.alive:
+                        return
+
                     buf = fastmc.proto.WriteBuffer()
                     self.writer.write(buf, 0x00,
                                       keepalive_id=random.randint(0, 99999))
-                    self.sock.send(buf)
+                    self.sock_send(buf)
                     Timer(1, timeout).start()
 
                 Timer(1, timeout).start()
@@ -226,6 +250,10 @@ class ClientHandler(object):
             elif self.reader.state == fastmc.proto.PLAY:
                 # ready to receive packets
                 pass
+
+    def sock_send(self, buf):
+        with self.sock_mutex:
+            self.sock.send(buf)
 
     def greenlet_run(self, sock):
         protocol_version = 47
@@ -245,4 +273,5 @@ class ClientHandler(object):
                 self.handle_pkt(pkt)
 
         print "Client disconnected"
+        self.alive = False
         sock.close()
