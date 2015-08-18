@@ -300,12 +300,9 @@ class ConnectionHandler(object):
         print "Time for chunk generation: %f" % (time.clock() - start)
         start = time.clock()
         fake_data, properties = my_world.encode_bulk(chunk_coords)
-        file = open("/home/ml/test.hex", "wb")
-        file.write(fake_data)
-        file.flush()
-        file.close()
+        print "Time for chunk encoding: %f" % (time.clock() - start)
 
-        start_encode = time.clock()
+        start = time.clock()
         chunk_info_list = []
         for coord in chunk_coords:
             property = properties[coord]
@@ -317,9 +314,7 @@ class ConnectionHandler(object):
             chunks=chunk_info_list
         )
         self.writer.write(out_buf, 0x26, bulk=bulk)
-        current_clock = time.clock()
-        print "Time for chunk encoding: %f" % (start_encode - start)
-        print "Total time for chunking: %f" % (current_clock - start)
+        print "Time for compressing & packing: %f" % (time.clock() - start)
 
         self.sock_send(out_buf)
 
