@@ -4,8 +4,12 @@ import uuid
 import fastmc.auth
 import fastmc.proto
 import pprint
+import cProfile
+import time
 from threading import Timer, Lock
 import time
+import pstats
+from pymc import world
 from pymc.util import event
 
 ping_event = event.Event()
@@ -50,8 +54,8 @@ class ConnectionHandler(object):
         self.sock_mutex = Lock()
 
     def handle_pkt(self, pkt):
-        print pkt
-        print
+        # print pkt
+        # print
 
         if self.reader.state == fastmc.proto.HANDSHAKE:
             if pkt.id == 0x00:
@@ -167,10 +171,10 @@ class ConnectionHandler(object):
                 # send join game packet, just for fun
                 out_buf.reset()
 
-                # join game packet, or also called "change dimension" - important when you change dimensions :P
+                # join game packet
                 self.writer.write(out_buf, 0x01,
                                   eid=1,
-                                  game_mode=1,
+                                  game_mode=0,
                                   dimension=0,
                                   difficulty=0,
                                   max_players=60,
@@ -187,43 +191,38 @@ class ConnectionHandler(object):
                                   flying_speed=0.1,
                                   walking_speed=0.1)
 
-                fake_data = bytearray()
-                for i in range(11*11):
-                    for i in range(16*16*16):
-                        fake_data.append(32)
-                        fake_data.append(0)
-                    for i in range(16*16*8):
-                        fake_data.append(255)
-                    for i in range(16*16*8):
-                        fake_data.append(255)
-                    for i in range(256):
-                        fake_data.append(1)
-
-                chunk_info_list = []
-                data_offset = 0
-                for x in range(-5, 6):
-                    for z in range(-5, 6):
-                        chunk_info = fastmc.proto.Chunk14w28a(x, z, 0b10000, data_offset)
-                        data_offset += 16*16*16*2 # blocks (1 short per block)
-                        data_offset += 16*16*8 # light (1 byte per 2 blocks)
-                        data_offset += 16*16*8 # skylight (1 byte per 2 blocks)
-                        data_offset += 16*16 # biomes (1 byte per block)
-                        chunk_info_list.append(chunk_info)
-
-                bulk = fastmc.proto.ChunkBulk14w28a(
-                    sky_light_sent=True,
-                    data=fake_data,
-                    chunks=chunk_info_list
+                # player list item, for skin and player list
+                player_actions = fastmc.proto.PlayerListActionAdd(
+                    uuid=self.uuid.int,
+                    name=self.player_ign,
+                    properties=[fastmc.proto.PlayerListActionAddProperty(**check['properties'][0])],
+                    game_mode=0,
+                    ping=0,
+                    display_name=None
                 )
 
-                self.writer.write(out_buf, 0x26, bulk=bulk)
+                list_actions = fastmc.proto.PlayerListActions(action=fastmc.proto.LIST_ACTION_ADD_PLAYER, players=[player_actions])
 
-                # send some fake terrain
-                # self.writer.write(out_buf, 0x21,
-                #                   chunk_x=0, chunk_z=0,
-                #                   continuous=True,
-                #                   primary_bitmap=0b10000,
-                #                   data=fake_data)
+                self.writer.write(out_buf, 0x38,
+                                  list_actions=list_actions)
+
+                self.sock_send(out_buf)
+                out_buf.reset()
+
+                #cProfile.runctx("self.write_world()", locals(), globals(), 'restats')
+                #p = pstats.Stats('restats')
+                #p.strip_dirs().sort_stats('time').print_stats()
+                self.write_world()
+
+                # time update - freezes time at noon
+                self.writer.write(out_buf, 0x03,
+                                      world_age=0,
+                                      time_of_day=-6000)
+
+                # chat message - welcome
+                self.writer.write(out_buf, 0x02,
+                                  chat={"text": "Welcome to PyMC! Testing done here!"},
+                                  position=1)
 
                 # player position and look - this will make the player leave the "Loading terrain..." screen
                 self.writer.write(out_buf, 0x08,
@@ -240,16 +239,89 @@ class ConnectionHandler(object):
                         return
 
                     buf = fastmc.proto.WriteBuffer()
+
+                    if not hasattr(self, "test"):
+                        self.test = True
+
+                        # set initial health
+                        self.writer.write(buf, 0x06,
+                                          health=20.0,
+                                          food=20,
+                                          food_saturation=500)
+
+                        # play damage animation
+                        self.writer.write(buf, 0x0B,
+                                          eid=1,
+                                          animation=1)
+
+                        # actually set health
+                        self.writer.write(buf, 0x06,
+                                          health=10.0,
+                                          food=20,
+                                          food_saturation=500)
+
+                        # chat message - welcome
+                        self.writer.write(buf, 0x02,
+                                  chat={"text": "Ouch!", "color": "dark_red", "bold": True},
+                                  position=1)
+
+
                     self.writer.write(buf, 0x00,
                                       keepalive_id=random.randint(0, 99999))
-                    self.sock_send(buf)
-                    Timer(1, timeout).start()
 
-                Timer(1, timeout).start()
+                    self.sock_send(buf)
+
+                    thread = Timer(1, timeout)
+                    thread.setDaemon(True)
+                    thread.start()
+
+                timeout()
 
             elif self.reader.state == fastmc.proto.PLAY:
                 # ready to receive packets
                 pass
+
+    def write_world(self):
+        out_buf = fastmc.proto.WriteBuffer()
+
+        start = time.clock()
+        my_world = world.World()
+        chunk_coords = []
+        for x in range(-5, 5):
+            for z in range(-5, 5):
+                chunk = world.Chunk(my_world, x=x, z=z)
+                my_world.set_chunk(chunk)
+                for xb in range(16):
+                    for yb in range(64, 80):
+                        for zb in range(16):
+                            chunk.set_block_id_and_metadata(xb, yb, zb, 2, 0)
+
+                chunk_coords.append(world.ChunkCoordinate(x=x, z=z))
+        print "Time for chunk generation: %f" % (time.clock() - start)
+        start = time.clock()
+        fake_data, properties = my_world.encode_bulk(chunk_coords)
+        file = open("/home/ml/test.hex", "wb")
+        file.write(fake_data)
+        file.flush()
+        file.close()
+
+        start_encode = time.clock()
+        chunk_info_list = []
+        for coord in chunk_coords:
+            property = properties[coord]
+            chunk_info = fastmc.proto.Chunk14w28a(coord.x, coord.z, property.bitmask, property.offset)
+            chunk_info_list.append(chunk_info)
+        bulk = fastmc.proto.ChunkBulk14w28a(
+            sky_light_sent=True,
+            data=fake_data,
+            chunks=chunk_info_list
+        )
+        self.writer.write(out_buf, 0x26, bulk=bulk)
+        current_clock = time.clock()
+        print "Time for chunk encoding: %f" % (start_encode - start)
+        print "Total time for chunking: %f" % (current_clock - start)
+
+        self.sock_send(out_buf)
 
     def sock_send(self, buf):
         with self.sock_mutex:
