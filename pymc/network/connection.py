@@ -150,7 +150,7 @@ class ConnectionHandler(object):
                     return
 
                 # set compression
-                threshold = 256
+                threshold = 64
                 self.writer.write(out_buf, 0x03,
                                   threshold=threshold)
 
@@ -206,13 +206,37 @@ class ConnectionHandler(object):
                 self.writer.write(out_buf, 0x38,
                                   list_actions=list_actions)
 
-                self.sock_send(out_buf)
-                out_buf.reset()
+                start = time.clock()
+                my_world = world.World()
+                chunk_coords = []
+                for x in range(-2, 2):
+                    for z in range(-2, 2):
+                        chunk = world.Chunk(my_world, x=x, z=z)
+                        my_world.set_chunk(chunk)
+                        for xb in range(16):
+                            for yb in range(64, 80):
+                                for zb in range(16):
+                                    chunk.set_block_id_and_metadata(xb, yb, zb, 2, 0)
 
-                #cProfile.runctx("self.write_world()", locals(), globals(), 'restats')
-                #p = pstats.Stats('restats')
-                #p.strip_dirs().sort_stats('time').print_stats()
-                self.write_world()
+                        chunk_coords.append(world.ChunkCoordinate(x=x, z=z))
+                print "Time for chunk generation: %f" % (time.clock() - start)
+                start = time.clock()
+                fake_data, properties = my_world.encode_bulk(chunk_coords)
+                print "Time for chunk encoding: %f" % (time.clock() - start)
+
+                start = time.clock()
+                chunk_info_list = []
+                for coord in chunk_coords:
+                    property = properties[coord]
+                    chunk_info = fastmc.proto.Chunk14w28a(coord.x, coord.z, property.bitmask, property.offset)
+                    chunk_info_list.append(chunk_info)
+                bulk = fastmc.proto.ChunkBulk14w28a(
+                    sky_light_sent=True,
+                    data=fake_data,
+                    chunks=chunk_info_list
+                )
+                self.writer.write(out_buf, 0x26, bulk=bulk)
+                print "Time for compressing & packing: %f" % (time.clock() - start)
 
                 # time update - freezes time at noon
                 self.writer.write(out_buf, 0x03,
@@ -242,6 +266,8 @@ class ConnectionHandler(object):
 
                     if not hasattr(self, "test"):
                         self.test = True
+
+                        print "Writing health stuff"
 
                         # set initial health
                         self.writer.write(buf, 0x06,
@@ -275,48 +301,13 @@ class ConnectionHandler(object):
                     thread.setDaemon(True)
                     thread.start()
 
-                timeout()
+                thread = Timer(1, timeout)
+                thread.setDaemon(True)
+                thread.start()
 
             elif self.reader.state == fastmc.proto.PLAY:
                 # ready to receive packets
                 pass
-
-    def write_world(self):
-        out_buf = fastmc.proto.WriteBuffer()
-
-        start = time.clock()
-        my_world = world.World()
-        chunk_coords = []
-        for x in range(-5, 5):
-            for z in range(-5, 5):
-                chunk = world.Chunk(my_world, x=x, z=z)
-                my_world.set_chunk(chunk)
-                for xb in range(16):
-                    for yb in range(64, 80):
-                        for zb in range(16):
-                            chunk.set_block_id_and_metadata(xb, yb, zb, 2, 0)
-
-                chunk_coords.append(world.ChunkCoordinate(x=x, z=z))
-        print "Time for chunk generation: %f" % (time.clock() - start)
-        start = time.clock()
-        fake_data, properties = my_world.encode_bulk(chunk_coords)
-        print "Time for chunk encoding: %f" % (time.clock() - start)
-
-        start = time.clock()
-        chunk_info_list = []
-        for coord in chunk_coords:
-            property = properties[coord]
-            chunk_info = fastmc.proto.Chunk14w28a(coord.x, coord.z, property.bitmask, property.offset)
-            chunk_info_list.append(chunk_info)
-        bulk = fastmc.proto.ChunkBulk14w28a(
-            sky_light_sent=True,
-            data=fake_data,
-            chunks=chunk_info_list
-        )
-        self.writer.write(out_buf, 0x26, bulk=bulk)
-        print "Time for compressing & packing: %f" % (time.clock() - start)
-
-        self.sock_send(out_buf)
 
     def sock_send(self, buf):
         with self.sock_mutex:
